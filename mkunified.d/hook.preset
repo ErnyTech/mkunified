@@ -1,0 +1,8 @@
+# mkunified preset file for the '%PKGBASE%' package
+
+source /etc/mkunified.conf  # Load default source
+
+VMLINUZ="$VMLINUZ_IMAGES/vmlinuz-%PKGBASE%"
+EFI_IMAGE="$EFI/$OUTPUT/%OUTPUT%.efi"
+
+%FALLBACK%MKINITCPIO_SKIP_HOOKS="autodetect"     # Set fallback image

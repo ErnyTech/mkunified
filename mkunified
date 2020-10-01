@@ -1,0 +1,200 @@
+#!/bin/bash
+###### LICENSE
+# mkunified - Unified kernel image generation utility which supports initrd generation using mkinitcpio
+# Copyright (C) 2020 Ernesto Castellotti <mail@ernestocastellotti.it>
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# or a later version if explicitly authorized by the copyright owner.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+######
+
+######
+# Util/Intro section
+######
+shopt -s extglob
+
+# needed files/directories
+MKUNIFIED_D=/etc/mkunified.d
+D_IMAGES=${MKUNIFIED_D}/images
+
+# options and runtime data
+OPTPRESETS=()
+ 
+yell() { echo "$0: $*" >&2; }
+die() { yell "$*"; exit 111; }
+try() { "$@" || die "cannot $*"; }
+
+######
+# Build image section
+######
+
+checkConf() {
+    [[ ! -d "$EFI" ]] && die "The EFI path specified for preset $preset is not a valid directory"
+    
+    if [[ $SPLASH_ENABLE == true ]]; then
+        [[ ! -f "$SPLASH" ]] && die "The SPLASH path specified for preset $preset is not a valid file"
+        identify $SPLASH | grep BMP > /dev/null || die "The SPLASH path specified for preset $preset is not a valid BMP image file"
+    fi
+    
+    [[ ! -f "$STUB" ]] && die "The STUB path specified for preset $preset is not a valid file"
+    
+    [[ ! -f "$OS_RELEASE" ]] && die "The OS_RELEASE path specified for preset $preset is not a valid file"
+    
+    [[ ! -d "$EFI/$OUTPUT" ]] && die "The OUTPUT path (absolute: $EFI/$OUTPUT) specified for preset $preset is not a valid directory"
+    
+    if [[ $INITRD_IMAGE_ENABLE == true ]]; then
+        [[ ! -f "INITRD_IMAGE" ]] && die "The INITRD_IMAGE path specified for preset $preset is not a valid file"
+    fi
+    
+    [[ ! -d "$VMLINUZ_IMAGES" ]] && die "The VMLINUZ_IMAGES path specified for preset $preset is not a valid directory"
+    
+    [[ ! -f "$MKINITCPIO_CONF" ]] && die "The MKINITCPIO_CONF path specified for preset $preset is not a valid file"
+}
+
+generateInitd() {
+    if [[ $MKINITCPIO_PARAMS_ENABLE == false ]]; then
+        MKINITCPIO_PARAMS="-k $VMLINUZ -c $MKINITCPIO_CONF -r $MKINITCPIO_ROOT"
+        
+        if [[ ! -z $MKINITCPIO_ADDHOOKS ]]; then
+            for hook in "${MKINITCPIO_ADDHOOKS[@]}"; do
+                MKINITCPIO_PARAMS+=" -A $hook"
+            done
+        fi
+        
+        if [[ ! -z "$MKINITCPIO_SKIP_HOOKS" ]]; then
+            for hook in "${MKINITCPIO_SKIP_HOOKS[@]}"; do
+                MKINITCPIO_PARAMS+=" -S $hook"
+            done
+        fi
+        
+        MKINITCPIO_PARAMS+=" -g $build_dir/initrd_tmp"
+    fi
+        
+    if [[ $MKINITCPIO_DISABLE == false ]]; then
+        echo "Generating initrd image for preset $preset using mkinitcpio"
+        mkinitcpio $MKINITCPIO_PARAMS  || die "Failed initrd generation using mkinitcpio"
+    fi
+    
+    if [[ $INITRD_IMAGE_ENABLE == false ]]; then
+        echo "Appending the pre-initrd and post-initrd image to the initrd image"
+        cat $PRE_INITRD "$build_dir/initrd_tmp" $POST_INITRD > "$build_dir/initrd" || die "Failed initrd generation when appending pre-initrd and post-initrd"
+        echo "Initd image generation successful"
+    else
+        cp "$INITRD_IMAGE" "$build_dir/initrd" || die "Failed copy initrd in \"$build_dir/initrd\""
+    fi
+    
+    rm -f "$build_dir/initrd_tmp"
+}
+
+generateEfi() {
+    echo "Generating unified kernel image for preset $preset"
+    
+    echo $CMDLINE > "$build_dir/cmdline"
+    
+    if [[ $SPLASH_ENABLE == true ]]; then
+        SPLASH_PARAMS="--add-section .splash="$SPLASH" --change-section-vma .splash=0x40000"
+    fi
+
+    objcopy \
+        --add-section .linux="$VMLINUZ" --change-section-vma .linux=0x2000000 \
+        --add-section .initrd="$build_dir/initrd" --change-section-vma .initrd=0x3000000 \
+        --add-section .osrel="$OS_RELEASE" --change-section-vma .osrel=0x20000 \
+        --add-section .cmdline="$build_dir/cmdline" --change-section-vma .cmdline=0x30000 \
+        $SPLASH_PARAMS \
+        "$STUB" "$EFI_IMAGE" || die "EFI unified kernel image generation failled!"
+        
+    echo "Unified kernel image generation successful: $EFI_IMAGE"
+}
+
+mainGen() {
+    preset=$1
+    file_preset="$MKUNIFIED_D"/"$preset".preset
+    source "$file_preset"
+    
+    [[ $? -ne 0 ]] && die "Failed to load preset $preset in $MKUNIFIED_D"
+    
+    build_dir=$(mktemp -d -t "mkunified-$preset-XXXXXXX")
+    mkdir -p $build_dir
+    
+    echo "Starting generation of the unified kernel image for preset $preset"
+    checkConf
+    generateInitd
+    generateEfi
+    echo "Unified kernel image generation completed"
+    
+    rm -r $build_dir
+}
+
+######
+# Client command section
+######
+usage() {
+    cat <<EOF
+mkunified
+usage: ${0##*/} [options]
+
+  Options:
+   -h, --help                   Display this message and exit
+   -p, --preset <file>          Build unified kernel image for specified preset from /etc/mkinitcpio.d
+   -P, --allpresets             Build unified kernel image all preset files in /etc/mkinitcpio.d
+
+EOF
+}
+
+SHORT="-hp:P"
+LONG="help,preset:,allpresets"
+PARSED=$(getopt --options ${SHORT} --longoptions ${LONG} --name "$0" -- "$@")
+
+if [[ $? -ne 0 || $# -eq 0 ]]; then 
+    usage
+    exit 2
+fi
+
+eval set -- "${PARSED}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            usage
+            exit
+        ;;
+        -p|--preset)
+            shift
+            OPTPRESETS+=("$1")
+            [[ ! -f "$MKUNIFIED_D"/"$1".preset ]] && die "No preset $1 found in $MKUNIFIED_D"
+        ;;
+        -P|--allpresets)
+            _optpresets=("$MKUNIFIED_D"/*.preset)
+            [[ -e ${_optpresets[0]} ]] || die "No presets found in $MKUNIFIED_D"
+            OPTPRESETS=()
+            
+            for i in "${_optpresets[@]}"; do
+                _filename=$(basename -- "$i")
+                _filename="${_filename%.*}"
+                OPTPRESETS+=("$_filename")
+            done
+            break
+        ;;
+        --)
+            break
+        ;;
+    esac
+    shift
+done
+
+for i in "${OPTPRESETS[@]}"; do
+    mainGen "$i"
+    
+    if [[ -f "$MKUNIFIED_D"/"$i"-fallback.preset ]]; then
+        mainGen "$i"-fallback
+    fi
+done

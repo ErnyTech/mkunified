@@ -1,0 +1,15 @@
+[Trigger]
+Type = File
+Operation = Remove
+Target = usr/lib/modules/*/vmlinuz
+
+[Trigger]
+Type = Package
+Operation = Remove
+Target = mkunified
+
+[Action]
+Description = Removing linux Unified Kernel Image...
+When = PreTransaction
+Exec = /usr/share/libalpm/scripts/mkunified-remove
+NeedsTargets

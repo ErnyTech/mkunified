@@ -1,0 +1,80 @@
+#!/bin/bash -e
+
+package=0
+
+process_preset() {
+    local _pkgbase=$1
+    local _fallback=$2
+    local _output=$_pkgbase
+    
+    if [ "$_fallback" = true ] ; then
+        _output="${_output}-fallback"
+        _fallback_set="s|%FALLBACK%||g"
+    else 
+        _fallback_set="/%FALLBACK%/d"
+    fi
+    
+    local _preset="/etc/mkunified.d/${_output}.preset"
+    
+    if [[ -n "${pkgbase}" && -e $_preset ]]; then
+        if ! cmp $_preset > /dev/null 2>&1 <(sed "s|%PKGBASE%|${_pkgbase}|g; s|%OUTPUT%|${_output}|g; ${_fallback_set}" /usr/share/mkunified/hook.preset); then
+            if [[ ! -e $_preset.pacsave ]]; then
+                # save the preset as pacsave
+                mv $_preset $_preset.pacsave && return 0
+            fi
+        else
+            # remove the preset
+            rm $_preset && return 0
+        fi
+    fi
+}
+
+remove_kernel() {
+    local _preset_name=$1
+    local _preset="/etc/mkunified.d/${_preset_name}.preset"
+    
+    if [[ -e $_preset ]]; then
+        source "$_preset"
+        
+        if [[ -e $VMLINUZ ]]; then
+            # remove the installed kernel
+            rm "$VMLINUZ"
+        fi
+        
+        if [[ -e $EFI_IMAGE ]]; then
+            # remove the installed kernel
+            rm "$EFI_IMAGE"
+        fi
+        
+        rmdir --ignore-fail-on-non-empty "/etc/mkunified.d"
+    fi
+}
+
+while read -r line; do
+    if [[ $line != */vmlinuz ]]; then
+        # triggers when it's a change to usr/lib/initcpio/*
+        package=1
+        continue
+    fi
+
+    if ! read -r pkgbase > /dev/null 2>&1 < "${line%/vmlinuz}/pkgbase"; then
+        # if the kernel has no pkgbase, we skip it
+        continue
+    fi
+
+    process_preset "$pkgbase" false
+    process_preset "$pkgbase" true
+    remove_kernel "${pkgbase}"
+    remove_kernel "${pkgbase}-fallback"
+done
+
+if (( package )) && compgen -G /etc/mkunified.d/"*.preset" > /dev/null; then
+    shopt -s nullglob
+    for preset in /etc/mkunified.d/*.preset; do
+        pkgbase=${preset##*/}
+        pkgbase=${pkgbase%.preset}
+        process_preset "$pkgbase" false
+        process_preset "$pkgbase" true
+    done
+    shopt -u nullglob
+fi

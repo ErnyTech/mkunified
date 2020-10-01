@@ -1,0 +1,74 @@
+#!/bin/bash -e
+
+args=()
+all=0
+
+generate_preset() {
+    local _pkgbase=$1
+    local _fallback=$2
+    local _output=$_pkgbase
+    
+    if [ "$_fallback" = true ] ; then
+        _output="${_output}-fallback"
+        _fallback_set="s|%FALLBACK%||g"
+    else 
+        _fallback_set="/%FALLBACK%/d"
+    fi
+    
+    local _preset="/etc/mkunified.d/${_output}.preset"
+    
+    if [[ ! -e $_preset ]]; then
+        if [[ -e $_preset.pacsave ]]; then
+            # move the pacsave to the template
+            mv "${_preset}.pacsave" "$_preset"
+        else
+            # create the preset from the template
+            sed "s|%PKGBASE%|${_pkgbase}|g; s|%OUTPUT%|${_output}|g; ${_fallback_set}" /usr/share/mkunified/hook.preset \
+                | install -Dm644 /dev/stdin "$_preset"
+        fi
+    fi
+}
+
+install_kernel() {
+    local _vmlinuz=$1
+    local _preset_name=$2
+    local _preset="/etc/mkunified.d/${_preset_name}.preset"
+    
+    # always install the kernel
+    source "$_preset"
+    mkdir -p "$VMLINUZ_IMAGES"
+    install -Dm644 "${_vmlinuz}" "$VMLINUZ"
+}
+
+while read -r line; do
+    if [[ $line != */vmlinuz ]]; then
+        # triggers when it's a change to usr/lib/initcpio/*
+        all=1
+        continue
+    fi
+
+    if ! read -r pkgbase > /dev/null 2>&1 < "${line%/vmlinuz}/pkgbase"; then
+        # if the kernel has no pkgbase, we skip it
+        continue
+    fi
+    
+    mkdir -p /etc/mkunified.d
+    generate_preset "$pkgbase" false
+    generate_preset "$pkgbase" true
+    
+    # always install the kernel
+    install_kernel "${line}" "${pkgbase}"
+    install_kernel "${line}" "${pkgbase}-fallback"
+
+    # compound args for each kernel
+    args+=(-p "${pkgbase}" "${pkgbase}-fallback")
+done
+
+if (( all )) && compgen -G /etc/mkunified.d/"*.preset" > /dev/null; then
+    # change to use all presets
+    args=(-P)
+fi
+
+if (( ${#args[@]} )); then
+    mkunified "${args[@]}"
+fi
