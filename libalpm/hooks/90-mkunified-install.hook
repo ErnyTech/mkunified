@@ -2,8 +2,10 @@
 Type = File
 Operation = Install
 Operation = Upgrade
+Target = usr/bin/mkunified
 Target = usr/lib/modules/*/vmlinuz
 Target = usr/lib/initcpio/*
+Target = usr/share/mkunified/*
 
 [Action]
 Description = Updating linux Unified kernel image...
