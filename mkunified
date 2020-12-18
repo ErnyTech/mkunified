@@ -172,6 +172,7 @@ while [[ $# -gt 0 ]]; do
             shift
             OPTPRESETS+=("$1")
             [[ ! -f "$MKUNIFIED_D"/"$1".preset ]] && die "No preset $1 found in $MKUNIFIED_D"
+            [[ -f "$MKUNIFIED_D"/"$1"-fallback.preset ]] && OPTPRESETS+=("$1"-fallback)
         ;;
         -P|--allpresets)
             _optpresets=("$MKUNIFIED_D"/*.preset)
@@ -194,8 +195,4 @@ done
 
 for i in "${OPTPRESETS[@]}"; do
     mainGen "$i"
-    
-    if [[ -f "$MKUNIFIED_D"/"$i"-fallback.preset ]]; then
-        mainGen "$i"-fallback
-    fi
 done
