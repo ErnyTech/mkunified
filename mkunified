@@ -45,6 +45,11 @@ checkConf() {
         identify $SPLASH | grep BMP > /dev/null || die "The SPLASH path specified for preset $preset is not a valid BMP image file"
     fi
     
+    if [[ $IMAGE_SIGN_ENABLE == true ]]; then
+        [[ ! -f "$IMAGE_SIGN_KEY" ]] && die "The IMAGE_SIGN_KEY path specified for preset $preset is not a valid file"
+        [[ ! -f "$IMAGE_SIGN_CERT" ]] && die "The IMAGE_SIGN_CERT path specified for preset $preset is not a valid file"
+    fi
+
     [[ ! -f "$STUB" ]] && die "The STUB path specified for preset $preset is not a valid file"
     
     [[ ! -f "$OS_RELEASE" ]] && die "The OS_RELEASE path specified for preset $preset is not a valid file"
@@ -112,6 +117,11 @@ generateEfi() {
         $SPLASH_PARAMS \
         "$STUB" "$EFI_IMAGE" || die "EFI unified kernel image generation failled!"
         
+    if [[ $IMAGE_SIGN_ENABLE == true ]]; then
+        echo "Signing unified kernel image for preset $preset"
+        sbsign --key "$IMAGE_SIGN_KEY" --cert "$IMAGE_SIGN_CERT" --output "$EFI_IMAGE" "$EFI_IMAGE"
+    fi
+
     echo "Unified kernel image generation successful: $EFI_IMAGE"
     rm "$build_dir/cmdline"
 }
